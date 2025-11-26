@@ -60,7 +60,7 @@ export const notes: Note[] = [
     }
 ];
 
-export const tags = [
+export const categories = [
     { name: 'School Related', icon: '🎓' },
     { name: 'Church Sermons', icon: '⛪' },
     { name: 'Movies and Games', icon: '🎮' },
@@ -68,10 +68,4 @@ export const tags = [
     { name: 'Love Life', icon: '💕' }
 ];
 
-export const folders = [
-    { name: '2023', count: 34 },
-    { name: '2022', count: 36 },
-    { name: '2021', count: 23 },
-    { name: '2020', count: 18 },
-    { name: '2019', count: 23 }
-];
+export const folders = [];

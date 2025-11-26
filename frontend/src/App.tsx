@@ -6,12 +6,28 @@ import NoteDetail from './components/NoteDetail';
 import type { Note } from './data'; // Keep type import, but we won't use the 'notes' array from data.ts anymore
 import './App.css';
 
+import SettingsModal from './components/SettingsModal';
+
 function App() {
   const [notes, setNotes] = useState<Note[]>([]);
   const [activeSection, setActiveSection] = useState('all');
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('light');
+
+  useEffect(() => {
+    const root = window.document.documentElement;
+    root.classList.remove('light', 'dark');
+
+    if (theme === 'system') {
+      const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      root.classList.add(systemTheme);
+    } else {
+      root.classList.add(theme);
+    }
+  }, [theme]);
 
   // Fetch notes from backend
   useEffect(() => {
@@ -20,7 +36,7 @@ function App() {
 
   const fetchNotes = async () => {
     try {
-      const response = await fetch('http://localhost:5000/api/notes');
+      const response = await fetch('/api/notes');
       if (response.ok) {
         const data = await response.json();
         // Map _id to id for frontend compatibility if needed, or just ensure Note type matches
@@ -37,13 +53,17 @@ function App() {
 
     // Filter by Section
     if (activeSection === 'favorites') {
-      result = result.filter(n => n.isFavorite);
+      result = result.filter(n => n.isFavorite && !n.isDeleted);
     } else if (activeSection === 'archived') {
-      result = result.filter(n => n.isArchived);
+      result = result.filter(n => n.isArchived && !n.isDeleted);
     } else if (activeSection === 'deleted') {
       result = result.filter(n => n.isDeleted);
-    } else if (activeSection !== 'all') {
-      result = result.filter(n => n.folder === activeSection || n.tag === activeSection);
+    } else if (activeSection === 'all') {
+      // 'All Notes' should typically exclude deleted and archived notes, or at least deleted ones
+      result = result.filter(n => !n.isDeleted && !n.isArchived);
+    } else {
+      // Folders/Tags
+      result = result.filter(n => (n.folder === activeSection || n.tag === activeSection) && !n.isDeleted);
     }
 
     // Filter by Search
@@ -82,7 +102,7 @@ function App() {
     };
 
     try {
-      const response = await fetch('http://localhost:5000/api/notes', {
+      const response = await fetch('/api/notes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newNoteData),
@@ -99,27 +119,59 @@ function App() {
     }
   };
 
-  const handleDeleteNote = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this note?')) return;
 
+
+  const counts = useMemo(() => ({
+    all: notes.length,
+    favorites: notes.filter(n => n.isFavorite).length,
+    archived: notes.filter(n => n.isArchived).length,
+    deleted: notes.filter(n => n.isDeleted).length,
+  }), [notes]);
+
+  const handleUpdateNote = async (id: string, updates: Partial<Note>) => {
     try {
-      const response = await fetch(`http://localhost:5000/api/notes/${id}`, {
-        method: 'DELETE',
+      const response = await fetch(`/api/notes/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates),
       });
 
       if (response.ok) {
-        setNotes(notes.filter(n => n.id !== id));
-        if (activeNoteId === id) {
-          setActiveNoteId(null);
-        }
+        const updatedNote = await response.json();
+        // Ensure id is preserved/mapped correctly
+        const noteWithId = { ...updatedNote, id: updatedNote._id || updatedNote.id };
+
+        setNotes(notes.map(n => n.id === id ? noteWithId : n));
       }
     } catch (error) {
-      console.error('Error deleting note:', error);
+      console.error('Error updating note:', error);
+    }
+  };
+
+  const handleDeleteNote = async (id: string) => {
+    // If we are already in the "Trash" (deleted) section, then permanently delete
+    if (activeSection === 'deleted') {
+      if (!confirm('Are you sure you want to permanently delete this note?')) return;
+      try {
+        const response = await fetch(`/api/notes/${id}`, {
+          method: 'DELETE',
+        });
+        if (response.ok) {
+          setNotes(notes.filter(n => n.id !== id));
+          if (activeNoteId === id) setActiveNoteId(null);
+        }
+      } catch (error) {
+        console.error('Error deleting note:', error);
+      }
+    } else {
+      // Otherwise, soft delete (move to trash)
+      handleUpdateNote(id, { isDeleted: true });
+      if (activeNoteId === id) setActiveNoteId(null);
     }
   };
 
   return (
-    <div className="flex flex-col h-screen w-full bg-white text-gray-900 font-sans overflow-hidden">
+    <div className="flex flex-col h-screen w-full bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 font-sans overflow-hidden transition-colors duration-200">
       <Header
         searchQuery={searchQuery}
         setSearchQuery={setSearchQuery}
@@ -127,6 +179,14 @@ function App() {
         onBack={() => setActiveNoteId(null)}
         showBackButton={!!activeNoteId}
         onAddNote={handleAddNote}
+        onOpenSettings={() => setIsSettingsOpen(true)}
+      />
+
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        theme={theme}
+        setTheme={setTheme}
       />
 
       <div className="relative flex flex-1 overflow-hidden">
@@ -138,6 +198,7 @@ function App() {
           }}
           isOpen={isSidebarOpen}
           onClose={() => setIsSidebarOpen(false)}
+          counts={counts}
         />
 
         {/* Mobile View Logic:
@@ -166,7 +227,11 @@ function App() {
             flex-1 h-full
             ${!activeNoteId ? 'hidden md:block' : 'block'}
           `}>
-            <NoteDetail note={activeNote} />
+            <NoteDetail
+              note={activeNote}
+              onUpdateNote={handleUpdateNote}
+              onDeleteNote={handleDeleteNote}
+            />
           </div>
         </div>
       </div>
